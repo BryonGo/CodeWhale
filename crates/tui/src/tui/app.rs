@@ -4733,7 +4733,7 @@ impl App {
         CompactionConfig {
             enabled: self.auto_compact,
             token_threshold: self.compact_threshold,
-            model: self.model.clone(),
+            model: self.effective_model_for_budget().to_string(),
             ..Default::default()
         }
     }
