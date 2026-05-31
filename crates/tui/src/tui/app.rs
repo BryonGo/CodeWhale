@@ -5985,10 +5985,20 @@ mod tests {
 
     #[test]
     fn test_compaction_config() {
-        let app = App::new(test_options(false), &Config::default());
+        let mut app = App::new(test_options(false), &Config::default());
         let config = app.compaction_config();
         // Config should be valid (just checking it returns something)
         let _ = config.enabled;
+
+        app.auto_model = true;
+        app.model = "auto".to_string();
+        app.last_effective_model = None;
+        let config = app.compaction_config();
+        assert_eq!(config.model, DEFAULT_TEXT_MODEL);
+
+        app.last_effective_model = Some("deepseek-v4-flash".to_string());
+        let config = app.compaction_config();
+        assert_eq!(config.model, "deepseek-v4-flash");
     }
 
     #[test]
