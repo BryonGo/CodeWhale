@@ -15,19 +15,22 @@ use crate::localization::normalize_configured_locale;
 use crate::palette::{normalize_hex_rgb_color, normalize_theme_name};
 
 const SETTINGS_FILE_NAME: &str = "settings.toml";
+const TUI_PREFS_FILE_NAME: &str = "tui.toml";
 
 // ============================================================================
-// TuiPrefs — ~/.deepseek/tui.toml
+// TuiPrefs — ~/.codewhale/tui.toml
 // ============================================================================
 
 /// TUI-specific preferences that are decoupled from agent/project config so
 /// they survive project switches (issue #437).
 ///
-/// Stored at `~/.deepseek/tui.toml`. When the file is absent the values fall
-/// back to the `[tui]` section of the normal `config.toml` (via
-/// [`TuiPrefs::load`]), and then to the struct's own defaults.
+/// Stored at `~/.codewhale/tui.toml` on new installs, with
+/// `~/.deepseek/tui.toml` retained as a legacy read fallback. When the file is
+/// absent the values fall back to the `[tui]` section of the normal
+/// `config.toml` (via [`TuiPrefs::load`]), and then to the struct's own
+/// defaults.
 ///
-/// # Example `~/.deepseek/tui.toml`
+/// # Example `~/.codewhale/tui.toml`
 ///
 /// ```toml
 /// theme    = "dark"        # "system" | "dark" | "light" | "grayscale" | "catppuccin-mocha" | ...
@@ -91,7 +94,7 @@ pub struct KeybindPrefs {
 #[allow(dead_code)] // see TuiPrefs note above; deferred to a later settings pass (#657).
 impl TuiPrefs {
     /// Return the canonical path of the TUI preferences file:
-    /// `~/.deepseek/tui.toml`.
+    /// `~/.codewhale/tui.toml`, or legacy `~/.deepseek/tui.toml` when present.
     ///
     /// Tests may override the home directory through the
     /// `DEEPSEEK_CONFIG_PATH` environment variable (the parent directory of
@@ -109,16 +112,17 @@ impl TuiPrefs {
             }
         }
 
-        let home = dirs::home_dir()
-            .context("Failed to resolve home directory: cannot determine tui.toml path.")?;
-        let primary = home.join(".codewhale").join("tui.toml");
-        if primary.exists() {
-            return Ok(primary);
-        }
-        Ok(home.join(".deepseek").join("tui.toml"))
+        let primary = codewhale_config::codewhale_home()
+            .ok()
+            .map(|home| home.join(TUI_PREFS_FILE_NAME));
+        let legacy_home = codewhale_config::legacy_deepseek_home()
+            .ok()
+            .map(|home| home.join(TUI_PREFS_FILE_NAME));
+
+        resolve_tui_prefs_path_from_candidates(primary, legacy_home)
     }
 
-    /// Load TUI preferences from `~/.deepseek/tui.toml`.
+    /// Load TUI preferences from `~/.codewhale/tui.toml` or a legacy fallback.
     ///
     /// If the file does not exist the struct defaults are returned — no error
     /// is produced. Parse errors surface as `Err` so the caller can warn the
@@ -135,8 +139,8 @@ impl TuiPrefs {
         Ok(prefs)
     }
 
-    /// Save TUI preferences to `~/.deepseek/tui.toml`, creating the
-    /// `~/.deepseek` directory if needed.
+    /// Save TUI preferences to `~/.codewhale/tui.toml` (or a legacy file when
+    /// it already exists), creating the target directory if needed.
     pub fn save(&self) -> Result<()> {
         let path = Self::path()?;
         if let Some(parent) = path.parent() {
@@ -165,6 +169,27 @@ impl TuiPrefs {
         self.theme = theme.to_string();
         Ok(())
     }
+}
+
+fn resolve_tui_prefs_path_from_candidates(
+    primary: Option<PathBuf>,
+    legacy_home: Option<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(path) = primary.as_ref()
+        && path.exists()
+    {
+        return Ok(path.clone());
+    }
+
+    if let Some(path) = legacy_home.as_ref()
+        && path.exists()
+    {
+        return Ok(path.clone());
+    }
+
+    primary.or(legacy_home).ok_or_else(|| {
+        anyhow::anyhow!("Failed to resolve tui preferences path: no home directory found.")
+    })
 }
 
 /// User settings with defaults
@@ -2288,6 +2313,35 @@ mod tests {
     }
 
     #[test]
+    fn tui_prefs_path_defaults_to_codewhale_home_for_new_writes() {
+        let _g = config_path_test_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _config_override = EnvVarRestore::remove("DEEPSEEK_CONFIG_PATH");
+        let _codewhale_home = EnvVarRestore::set("CODEWHALE_HOME", tmp.path().join(".codewhale"));
+        let _home = EnvVarRestore::set("HOME", tmp.path());
+
+        let got = TuiPrefs::path().expect("tui prefs path");
+
+        assert_eq!(got, tmp.path().join(".codewhale").join("tui.toml"));
+    }
+
+    #[test]
+    fn tui_prefs_path_reads_legacy_deepseek_home_when_present() {
+        let _g = config_path_test_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let primary = tmp.path().join(".codewhale").join("tui.toml");
+        let legacy_dir = tmp.path().join(".deepseek");
+        std::fs::create_dir_all(&legacy_dir).expect("legacy dir");
+        let legacy_home = legacy_dir.join("tui.toml");
+        std::fs::write(&legacy_home, "theme = \"light\"\n").expect("legacy prefs");
+
+        let got = resolve_tui_prefs_path_from_candidates(Some(primary), Some(legacy_home.clone()))
+            .expect("tui prefs path");
+
+        assert_eq!(got, legacy_home);
+    }
+
+    #[test]
     fn tui_prefs_defaults_are_dark_theme_zero_font() {
         let prefs = TuiPrefs::default();
         assert_eq!(prefs.theme, "dark");
@@ -2427,18 +2481,15 @@ mod tests {
     }
 
     #[test]
-    fn tui_prefs_path_uses_home_deepseek_subdir_by_default() {
+    fn tui_prefs_path_uses_home_codewhale_subdir_by_default() {
         let _g = config_path_test_guard();
-        // Without DEEPSEEK_CONFIG_PATH the path should end with
-        // .deepseek/tui.toml relative to the home directory.
-        // We skip this check if home_dir() is unavailable (CI without HOME).
-        if let Some(home) = dirs::home_dir() {
-            let expected = home.join(".deepseek").join("tui.toml");
-            // Only compare when no env override is active.
-            if std::env::var("DEEPSEEK_CONFIG_PATH").is_err() {
-                let got = TuiPrefs::path().expect("path should resolve");
-                assert_eq!(got, expected);
-            }
-        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _config_override = EnvVarRestore::remove("DEEPSEEK_CONFIG_PATH");
+        let _codewhale_home = EnvVarRestore::set("CODEWHALE_HOME", tmp.path().join(".codewhale"));
+        let _home = EnvVarRestore::set("HOME", tmp.path());
+
+        let got = TuiPrefs::path().expect("path should resolve");
+
+        assert_eq!(got, tmp.path().join(".codewhale").join("tui.toml"));
     }
 }
