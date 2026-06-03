@@ -773,13 +773,25 @@ fn likely_field_corrections(
         );
     }
     // RLM source fields are easy to misname (#2659). rlm_open takes exactly one
-    // of file_path / content / url; nudge common wrong names toward those.
+    // of file_path / content / url / session_object; nudge common wrong names
+    // toward those.
     if tool_name == "rlm_open" {
-        for wrong in ["prompt", "resident_file", "text", "body", "path", "file", "source"] {
-            if has_received(wrong) && !has_received("file_path") && !has_received("content")
+        for wrong in [
+            "prompt",
+            "resident_file",
+            "text",
+            "body",
+            "path",
+            "file",
+            "source",
+        ] {
+            if has_received(wrong)
+                && !has_received("file_path")
+                && !has_received("content")
                 && !has_received("url")
+                && !has_received("session_object")
             {
-                corrections.push(format!("{wrong} -> file_path (local file), content (inline text), or url"));
+                corrections.push(format!("{wrong} -> file_path (local file), content (inline text), url, or session_object"));
             }
         }
     }

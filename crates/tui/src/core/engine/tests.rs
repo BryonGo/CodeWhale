@@ -1041,6 +1041,68 @@ fn deferred_tool_preflight_loads_edit_schema_without_executing_bad_aliases() {
 }
 
 #[test]
+fn deferred_tool_preflight_guides_rlm_open_misnamed_source_fields() {
+    let (engine, _handle) = Engine::new(EngineConfig::default(), &Config::default());
+    let registry = engine
+        .build_turn_tool_registry_builder(
+            AppMode::Agent,
+            engine.config.todos.clone(),
+            engine.config.plan_state.clone(),
+        )
+        .build(engine.build_tool_context(AppMode::Agent, false));
+    let always_load = HashSet::new();
+    let mut catalog = build_model_tool_catalog(
+        registry.to_api_tools_with_cache(true),
+        vec![],
+        AppMode::Agent,
+        &always_load,
+    );
+    catalog
+        .iter_mut()
+        .find(|tool| tool.name == "rlm_open")
+        .expect("rlm_open registered")
+        .defer_loading = Some(true);
+    let mut active = initial_active_tools(&catalog);
+    assert!(!active.contains("rlm_open"));
+
+    let result = preflight_requested_deferred_tool(
+        "rlm_open",
+        &json!({
+            "name": "active_prompt",
+            "prompt": "inspect this",
+            "path": "src/lib.rs"
+        }),
+        &catalog,
+        &mut active,
+    )
+    .expect("deferred rlm_open should preflight");
+
+    assert!(active.contains("rlm_open"));
+    assert!(result.success);
+    assert!(result.content.contains("Tool `rlm_open` was deferred"));
+    assert!(result.content.contains("The tool was not executed"));
+    assert!(result.content.contains("session_object: string"));
+    assert!(
+        result.content.contains(
+            "prompt -> file_path (local file), content (inline text), url, or session_object"
+        ),
+        "prompt correction includes session_object: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains(
+            "path -> file_path (local file), content (inline text), url, or session_object"
+        ),
+        "path correction includes session_object: {}",
+        result.content
+    );
+    assert_eq!(
+        result.metadata.as_ref().unwrap()["deferred_tool_loaded"],
+        json!(true)
+    );
+}
+
+#[test]
 fn deferred_tool_preflight_guides_checklist_update_list_replacement() {
     let (engine, _handle) = Engine::new(EngineConfig::default(), &Config::default());
     let registry = engine

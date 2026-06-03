@@ -97,10 +97,11 @@ impl ToolSpec for RlmOpenTool {
     }
 
     fn description(&self) -> &'static str {
-        "Open a persistent RLM context. Loads `file_path`, `content`, or `url` \
-         into a named Python kernel and returns only metadata: name, length, \
-         preview, and sha256. Use this for large or unfamiliar inputs so the \
-         parent transcript holds a handle, not the body."
+        "Open a persistent RLM context. Loads `file_path`, `content`, `url`, \
+         or `session_object` into a named Python kernel and returns only \
+         metadata: name, length, preview, and sha256. Use this for large or \
+         unfamiliar inputs so the parent transcript holds a handle, not the \
+         body."
     }
 
     fn input_schema(&self) -> Value {
@@ -147,18 +148,25 @@ impl ToolSpec for RlmOpenTool {
         let source_count = rlm_open_source_count(&input);
         if source_count != 1 {
             let mut msg = String::from(
-                "rlm_open: provide exactly one of `file_path` (local file), `content` (inline text), or `url`",
+                "rlm_open: provide exactly one of `file_path` (local file), `content` (inline text), `url`, or `session_object`",
             );
             // "did you mean" for common misnamings (#2655).
             if let Some(obj) = input.as_object() {
-                let seen: Vec<&str> =
-                    ["prompt", "resident_file", "text", "body", "path", "file", "source"]
-                        .into_iter()
-                        .filter(|k| obj.contains_key(*k))
-                        .collect();
+                let seen: Vec<&str> = [
+                    "prompt",
+                    "resident_file",
+                    "text",
+                    "body",
+                    "path",
+                    "file",
+                    "source",
+                ]
+                .into_iter()
+                .filter(|k| obj.contains_key(*k))
+                .collect();
                 if !seen.is_empty() {
                     msg.push_str(&format!(
-                        ". Saw {seen:?} — did you mean file_path/content/url? (to evaluate against an existing context, pass its name to rlm_eval, or use `session_object`)"
+                        ". Saw {seen:?} — did you mean file_path/content/url/session_object? (to evaluate against an existing context, pass its name to rlm_eval, or use `session_object`)"
                     ));
                 }
             }
@@ -819,6 +827,10 @@ mod tests {
             .expect_err("misnamed source field should fail");
         let msg = err.to_string();
         assert!(msg.contains("file_path"), "names the real fields: {msg}");
+        assert!(
+            msg.contains("`url`, or `session_object`"),
+            "names session_object in the valid source field list: {msg}"
+        );
         assert!(msg.contains("prompt"), "echoes the wrong field: {msg}");
     }
 
