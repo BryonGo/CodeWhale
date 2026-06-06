@@ -66,6 +66,11 @@ pub struct SettingsSection {
     pub composer_density: ComposerDensityValue,
     pub composer_border: bool,
     pub composer_vim_mode: ComposerVimModeValue,
+    #[schemars(range(min = 0))]
+    pub mention_menu_limit: usize,
+    pub mention_menu_behavior: MentionMenuBehaviorValue,
+    #[schemars(range(min = 0))]
+    pub mention_walk_depth: usize,
     pub transcript_spacing: TranscriptSpacingValue,
     pub status_indicator: StatusIndicatorValue,
     pub synchronized_output: SynchronizedOutputValue,
@@ -202,6 +207,13 @@ pub enum ComposerVimModeValue {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum MentionMenuBehaviorValue {
+    Fuzzy,
+    Browser,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum TranscriptSpacingValue {
     Compact,
     Comfortable,
@@ -327,6 +339,9 @@ pub fn build_document(app: &App, config: &Config) -> Result<ConfigUiDocument> {
             composer_density: settings.composer_density.as_str().into(),
             composer_border: settings.composer_border,
             composer_vim_mode: settings.composer_vim_mode.as_str().into(),
+            mention_menu_limit: settings.mention_menu_limit,
+            mention_menu_behavior: settings.mention_menu_behavior.as_str().into(),
+            mention_walk_depth: settings.mention_walk_depth,
             transcript_spacing: settings.transcript_spacing.as_str().into(),
             status_indicator: settings.status_indicator.as_str().into(),
             synchronized_output: settings.synchronized_output.as_str().into(),
@@ -502,6 +517,18 @@ pub fn apply_document(
         (
             "composer_vim_mode",
             doc.settings.composer_vim_mode.as_setting(),
+        ),
+        (
+            "mention_menu_limit",
+            &doc.settings.mention_menu_limit.to_string(),
+        ),
+        (
+            "mention_menu_behavior",
+            doc.settings.mention_menu_behavior.as_setting(),
+        ),
+        (
+            "mention_walk_depth",
+            &doc.settings.mention_walk_depth.to_string(),
         ),
         (
             "transcript_spacing",
@@ -768,6 +795,24 @@ impl From<&str> for ComposerVimModeValue {
     }
 }
 
+impl MentionMenuBehaviorValue {
+    fn as_setting(self) -> &'static str {
+        match self {
+            Self::Fuzzy => "fuzzy",
+            Self::Browser => "browser",
+        }
+    }
+}
+
+impl From<&str> for MentionMenuBehaviorValue {
+    fn from(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "browser" => Self::Browser,
+            _ => Self::Fuzzy,
+        }
+    }
+}
+
 impl TranscriptSpacingValue {
     fn as_setting(self) -> &'static str {
         match self {
@@ -1009,7 +1054,7 @@ fn bool_str(value: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::config::{ApiProvider, Config};
     use crate::test_support::lock_test_env;
     use crate::tui::app::{App, TuiOptions};
     use std::fs;
@@ -1040,7 +1085,16 @@ mod tests {
             resume_session_id: None,
             initial_input: None,
         };
-        App::new(options, &Config::default())
+        let mut app = App::new(options, &Config::default());
+        // App::new merges developer-local settings, which can include a saved
+        // provider/model from the interactive TUI. Keep these config UI tests
+        // pinned to DeepSeek defaults so they only exercise document apply
+        // semantics.
+        app.model = "deepseek-v4-pro".to_string();
+        app.auto_model = false;
+        app.api_provider = ApiProvider::Deepseek;
+        app.model_ids_passthrough = false;
+        app
     }
 
     #[test]
